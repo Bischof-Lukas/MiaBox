@@ -1,0 +1,28 @@
+# Compiled object files
+*.o
+*.obj
+*.elf
+
+# Build folders (Arduino and VSCode)
+build/
+.arduino/
+.arduinoIDE/
+.vscode/.arduino/
+
+# Arduino precompiled files
+*.bin
+*.hex
+*.eep
+*.map
+
+# VS Code settings (keep only if you want shared project settings)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
