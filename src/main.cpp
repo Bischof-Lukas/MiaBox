@@ -6,11 +6,14 @@
 #include <MFRC522.h>
 #include <DFRobotDFPlayerMini.h>
 #include <Bounce2.h>
+// TODO: Pause button funktioniert nicht
+// TODO: immer nur das gleiche wird abgespielt
 
-//Global variables :/
+// Global variables :/
 String currentUID = "";
 unsigned long idleMillis = 0;
-const unsigned long idleDelay = 60000;
+const unsigned long idleDelay = 30000;
+bool validFolders[101] = {false};
 
 // MFRC522
 #define SS_PIN 9
@@ -43,10 +46,10 @@ enum BoxState
 };
 BoxState state = IDLE;
 
-//Forward declarations
+// Forward declarations
 void handleButtons();
 void handleRFID();
-void handleTrackFinished();
+void handleTrackFinished(uint8_t dfEvent);
 void enterStandby();
 void enterLowPowerSleep();
 void wakeup();
@@ -66,13 +69,13 @@ String getUIDString()
 }
 
 uint8_t uidToFolder()
-{ // UID to folder mapping
+{
   uint32_t uidInt = 0;
   for (byte i = 0; i < mfrc522.uid.size; i++)
   {
     uidInt = uidInt * 256 + mfrc522.uid.uidByte[i];
   }
-  return (uidInt % 100) + 1; // folder 1-100
+  return (uidInt % 96) + 4; // Ordner 1 bis 3 reserviert
 }
 
 void setup()
@@ -99,22 +102,38 @@ void setup()
       ;
   }
   mp3.volume(20);
+
+  for (uint8_t i = 1; i <= 99; i++)
+  {
+    int count = mp3.readFileCountsInFolder(i);
+    validFolders[i] = (count > 0);
+    delay(20);
+  }
 }
 
 void loop()
 {
   playDebouncer.update();
   standbyDebouncer.update();
-  handleButtons();
-  handleRFID();
-  handleTrackFinished();
 
-   if (state == IDLE && (millis() - idleMillis >= idleDelay)) {
-      enterStandby();
+  uint8_t dfEvent = 0;
+  if (mp3.available())
+  {
+    dfEvent = mp3.readType();
   }
 
-  if (state != IDLE) {
-      idleMillis = millis(); // reset timer when activity happens
+  handleButtons();
+  handleRFID();
+  handleTrackFinished(dfEvent);
+
+  if (state == IDLE && (millis() - idleMillis >= idleDelay))
+  {
+    enterStandby();
+  }
+
+  if (state != IDLE)
+  {
+    idleMillis = millis();
   }
 }
 
@@ -139,7 +158,7 @@ void handleButtons()
   }
 }
 
-  void handleRFID()
+void handleRFID()
 {
   if (!mfrc522.PICC_IsNewCardPresent())
     return;
@@ -157,23 +176,26 @@ void handleButtons()
     Serial.print("New card, folder: ");
     Serial.println(folder);
 
-    mp3.stop();                 // stop current audio
-    mp3.playFolder(folder, 1);  // auto-play new card
+    mp3.stop();
+    if (!validFolders[folder])
+    {
+      //TODO: Error Sound abspielen
+      mfrc522.PICC_HaltA();
+      return;
+    }
+    mp3.playFolder(folder, 1);
     state = PLAYING;
   }
-
   mfrc522.PICC_HaltA();
 }
 
-void handleTrackFinished()
+void handleTrackFinished(uint8_t dfEvent)
 {
-  if (state == PLAYING && mp3.available())
+  if (state == PLAYING && dfEvent == DFPlayerPlayFinished)
   {
-    if (mp3.readType() == DFPlayerPlayFinished)
-    {
-      trackFinishedMillis = millis();
-      state = TRACK_FINISHED_WAIT;
-    }
+    currentUID = "";
+    trackFinishedMillis = millis();
+    state = TRACK_FINISHED_WAIT;
   }
   if (state == TRACK_FINISHED_WAIT)
   {
@@ -184,47 +206,37 @@ void handleTrackFinished()
   }
 }
 
-
 void enterStandby()
 {
   if (state == STANDBY)
-    return; // Already in standby, ignore
+    return;
 
-  Serial.println("Entering standby...");
-  trackFinishedMillis = millis(); //reset idle timer
+  Serial.println("Standby...");
 
-  // Stop audiobook and prepare for sleep
   mp3.stop();
+  currentUID = "";
   state = STANDBY;
 
-  // Play sleep sound (folder 2, track 1)
   mp3.playFolder(2, 1);
   unsigned long start = millis();
-      while (true)
-      {
-          if (mp3.available())
-          {
-              if (mp3.readType() == DFPlayerPlayFinished)
-                  break;
-          }
-          // timeout just in case
-          if (millis() - start > 2000) // 5 sec max
-              break;
-      }
+  while (millis() - start < 2000) //sleep sound länge
+  {
+    if (mp3.available() && mp3.readType() == DFPlayerPlayFinished)
+      break;
+  }
+
   enterLowPowerSleep();
 
-  // After waking
-  state = IDLE;  // ready for next action
-
-  // Play wake sound (folder 1, track 1)
+  //Aufwachen
+  state = IDLE;
   mp3.playFolder(1, 1);
-  delay(50); // let DFPlayer latch
+  delay(50);
 }
 
 void enterLowPowerSleep()
 {
-  // Wait until button released to avoid retrigger
-  while (digitalRead(STANDBY_BUTTON) == LOW);
+  while (digitalRead(STANDBY_BUTTON) == LOW)
+    ;
   delay(20);
 
   // Prepare MCU for sleep
@@ -241,12 +253,13 @@ void enterLowPowerSleep()
   detachInterrupt(digitalPinToInterrupt(STANDBY_BUTTON));
   ADCSRA |= (1 << ADEN);
 
-  //reset auto-timers
+  // reset auto-timers
   trackFinishedMillis = millis();
   idleMillis = millis();
 
   // Wait until button released after waking
-  while (digitalRead(STANDBY_BUTTON) == LOW);
+  while (digitalRead(STANDBY_BUTTON) == LOW)
+    ;
   delay(20);
 
   // Update debouncers
@@ -257,4 +270,3 @@ void enterLowPowerSleep()
 void wakeup()
 {
 }
-
