@@ -160,32 +160,30 @@ void handleButtons()
 
 void handleRFID()
 {
-  if (!mfrc522.PICC_IsNewCardPresent())
-    return;
-  if (!mfrc522.PICC_ReadCardSerial())
-    return;
+  if (!mfrc522.PICC_IsNewCardPresent()) return;
+  if (!mfrc522.PICC_ReadCardSerial()) return;
 
   String newUID = getUIDString();
+  if (newUID == currentUID) { mfrc522.PICC_HaltA(); return; }
 
-  // If a different card is detected
-  if (newUID != currentUID)
+  currentUID = newUID;
+
+  byte buffer[18];
+  byte size = sizeof(buffer);
+  MFRC522::StatusCode status = mfrc522.MIFARE_Read(4, buffer, &size);
+
+  if (status != MFRC522::STATUS_OK || buffer[0] == 0 || buffer[0] > 99)
   {
-    currentUID = newUID;
-
-    uint8_t folder = uidToFolder();
-    Serial.print("New card, folder: ");
-    Serial.println(folder);
-
-    mp3.stop();
-    if (!validFolders[folder])
-    {
-      //TODO: Error Sound abspielen
-      mfrc522.PICC_HaltA();
-      return;
-    }
-    mp3.playFolder(folder, 1);
-    state = PLAYING;
+    // TODO: error sound
+    mfrc522.PICC_HaltA();
+    return;
   }
+
+  uint8_t folder = buffer[0];
+  mp3.stop();
+  mp3.playFolder(folder, 1);
+  state = PLAYING;
+
   mfrc522.PICC_HaltA();
 }
 
